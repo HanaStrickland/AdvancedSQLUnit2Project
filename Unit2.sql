@@ -1,10 +1,3 @@
-/* 
-- The procedure should take an input of a variable that contains JSON
-- The file should be used to update the existing data in the Sales.SalesPerson table
-- It should also insert a row for the quota date into the Sales.SalesPersonQuotaHistory table. If a row already exists for the sales person and the quota date, the data should be overwritten
-- The history table does not allow for null values. If the sales person has no quota for the period, enter 0's for the null fields. 
-*/
-
 -- Check Constraint for Quota was greater than 0; had to change this to meet prompt requirements
 -- ALTER TABLE Sales.SalesPerson drop CONSTRAINT CK_SalesPerson_SalesQuota
 -- ALTER TABLE [Sales].[SalesPerson]  WITH CHECK ADD  CONSTRAINT [CK_SalesPerson_SalesQuota] CHECK  (([SalesQuota]>=(0.00)));
@@ -95,7 +88,7 @@ EXEC UpdateSalesPersonData '{
             "SalesGoal": {
                 "GoalDate": "10-01-2021",  
                 "QuarterlyGoal": 100000.0000,
-                "SalesBonus": 1234.0000
+                "SalesBonus": 1000.0000
             }
         },
         {
@@ -295,7 +288,7 @@ EXEC UpdateSalesPersonData '{
 -- Checking Procedure --
 -- select * from dbo.NewSalesPersonData where SalesPersonID = 274
 -- select * from Sales.SalesPerson where BusinessEntityID = 274
--- select * from Sales.SalesPersonQuotaHistory where BusinessEntityID = 274 order by ModifiedDate desc
+-- select * from Sales.SalesPersonQuotaHistory where BusinessEntityID = 277 order by ModifiedDate desc
 
 /***************************************
 * Getting Salesperson Data
@@ -314,7 +307,6 @@ EXEC UpdateSalesPersonData '{
 
 USE AdventureWorks_AdvSql_26_HS
 GO
-
 
 CREATE PROCEDURE GetSalesPersonInfo (@SalesYear int)
 AS
@@ -376,6 +368,26 @@ PIVOT
     for quota_quarter in ([1],[2],[3],[4])
 ) as quarterPivot
 
+/** Quota Temp Table **/
+
+;with commisionpercent as
+(
+    select BusinessEntityID, year(QuotaDate) as quota_year, DATEPART(QQ, QuotaDate) as quota_quarter, CommissionPercent
+    from Sales.SalesPersonQuotaHistory
+    where year(QuotaDate) = @SalesYear
+)
+select BusinessEntityID, quota_year,
+    isnull([1],0) as Q1commissionpct,
+    isnull([2],0) as Q2commissionpct,
+    isnull([3],0) as Q3commissionpct,
+    isnull([4],0) as Q4commissionpct
+into #temp_commissionpercent
+from commisionpercent
+PIVOT
+(
+    min(CommissionPercent) 
+    for quota_quarter in ([1],[2],[3],[4])
+) as quarterPivot
 
 /** Bonus Temp Table **/
 ;with bonusdata as
@@ -403,49 +415,50 @@ PIVOT
 
 ;with all_quarterly_data as
 (
-    select s.SalesPersonID, CONCAT(p.FirstName, ' ', p.LastName) as SalesPerson, s.order_year as SalesYear, q.CommissionPercent,
+    select s.SalesPersonID, CONCAT(p.FirstName, ' ', p.LastName) as SalesPerson, s.order_year as SalesYear,
 
     -- Q1
 
-    Q1Sales, Q1Quota, 
+    Q1Quota, Q1Sales, Q1commissionpct,
     case
         when Q1Quota = 0 then 0
         when Q1Sales >= Q1Quota then Q1Bonus
         else 0
     end as EarnedBonusQ1,
-    (Q1Sales * q.CommissionPercent) as Q1Commission,
+    (Q1Sales * Q1commissionpct) as Q1Commission,
 
     -- Q2
-    Q2Sales, Q2Quota, 
+    Q2Quota, Q2Sales, Q2commissionpct,
     case
         when Q2Quota = 0 then 0
         when Q2Sales >= Q2Quota then Q2Bonus
         else 0
     end as EarnedBonusQ2,
-    (Q2Sales * q.CommissionPercent) as Q2Commission,
+    (Q2Sales * Q2commissionpct) as Q2Commission,
 
     -- Q3
-    Q3Sales, Q3Quota, 
+    Q3Quota, Q3Sales, Q3commissionpct,
     case
         when Q3Quota = 0 then 0
         when Q3Sales >= Q3Quota then Q3Bonus
         else 0
     end as EarnedBonusQ3,
-    (Q3Sales * q.CommissionPercent) as Q3Commission,
+    (Q3Sales * Q3commissionpct) as Q3Commission,
 
     -- Q4
-    Q4Sales, Q4Quota, 
+    Q4Quota, Q4Sales, Q4commissionpct,
     case
         when Q4Quota = 0 then 0
         when Q4Sales >= Q4Quota then Q4Bonus
         else 0
     end as EarnedBonusQ4,
-    (Q4Sales * q.CommissionPercent) as Q4Commission
+    (Q4Sales * Q4commissionpct) as Q4Commission
         
     from #temp_sales as s
     join Person.Person as p         on s.SalesPersonID = p.BusinessEntityID
     join #temp_quota as q      on s.SalesPersonID = q.BusinessEntityID
     join #temp_bonus as b      on s.SalesPersonID = b.BusinessEntityID
+    join #temp_commissionpercent as c on s.SalesPersonID = c.BusinessEntityID
 )
 select *,
 (Q1Sales + Q2Sales + Q3Sales + Q4Sales) as total_annual_sales,
@@ -457,6 +470,7 @@ from all_quarterly_data
 drop table #temp_sales
 drop table #temp_bonus
 drop table #temp_quota
+drop table #temp_commissionpercent
 END
 GO
 
